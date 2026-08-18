@@ -1,18 +1,20 @@
 using System;
-using System.Collections;
 using System.Collections.Generic;
 using System.IO;
+using System.Threading;
+using Cysharp.Threading.Tasks;
 using UnityEngine;
 #if UNITY_EDITOR
 using UnityEditor;
 #endif
 
 /// <summary>
-/// AssetBundle 核心管理器
-/// - 引用计数
-/// - 依赖自动加载/卸载
-/// - 路径优先级：persistent → StreamingAssets
-/// - 编辑器下可直接走 AssetDatabase（不打 AB）
+/// AssetBundle 核心管理器（UniTask 版）
+/// - 加载任务去重
+/// - CancellationToken 全链路
+/// - Cancel 时孤儿 AB 立即 Unload
+/// - 依赖级联引用计数
+/// - 编辑器默认 AssetDatabase
 /// </summary>
 public class ABManager : MonoBehaviour
 {
@@ -20,12 +22,9 @@ public class ABManager : MonoBehaviour
 
     private ABManifest _manifest;
     private readonly Dictionary<string, ABRef> _loaded = new Dictionary<string, ABRef>();
+    private readonly Dictionary<string, UniTask<AssetBundle>> _loadingTasks = new Dictionary<string, UniTask<AssetBundle>>();
     private bool _inited;
 
-    /// <summary>
-    /// 编辑器下是否强制使用 AssetBundle（默认 false，直接 AssetDatabase）
-    /// 可在启动前设置，或用宏 USE_ASSETBUNDLE
-    /// </summary>
     public static bool ForceUseAssetBundleInEditor = false;
 
     void Awake()
@@ -41,43 +40,35 @@ public class ABManager : MonoBehaviour
 
     #region 初始化
 
-    public IEnumerator Initialize(Action onComplete = null)
+    public async UniTask InitializeAsync(CancellationToken token = default)
     {
-        if (_inited)
-        {
-            onComplete?.Invoke();
-            yield break;
-        }
+        if (_inited) return;
 
 #if UNITY_EDITOR
         if (!ShouldUseAssetBundle())
         {
             _manifest = new ABManifest { version = "editor" };
             _inited = true;
-            Debug.Log("[AB] 编辑器模式：直接使用 AssetDatabase，跳过 Manifest");
-            onComplete?.Invoke();
-            yield break;
+            Debug.Log("[AB] 编辑器模式：AssetDatabase 直读");
+            return;
         }
 #endif
 
         string path = ABPath.GetManifestPath(true);
-        if (!File.Exists(path))
+        if (File.Exists(path))
         {
-            // Android StreamingAssets 不能直接 File.Exists，需要特殊处理时可扩展
-            Debug.LogWarning($"[AB] Manifest 不存在: {path}，请确认首包已放入 StreamingAssets 或已热更");
-            _manifest = new ABManifest();
+            string json = File.ReadAllText(path);
+            _manifest = JsonUtility.FromJson<ABManifest>(json) ?? new ABManifest();
         }
         else
         {
-            string json = File.ReadAllText(path);
-            _manifest = JsonUtility.FromJson<ABManifest>(json);
-            if (_manifest == null)
-                _manifest = new ABManifest();
+            Debug.LogWarning($"[AB] Manifest 不存在: {path}");
+            _manifest = new ABManifest();
         }
 
         _inited = true;
-        Debug.Log($"[AB] 初始化完成, version={_manifest.version}, bundles={_manifest.bundles?.Count ?? 0}");
-        onComplete?.Invoke();
+        Debug.Log($"[AB] 初始化完成 version={_manifest.version} count={_manifest.bundles?.Count ?? 0}");
+        await UniTask.CompletedTask;
     }
 
     bool ShouldUseAssetBundle()
@@ -96,32 +87,92 @@ public class ABManager : MonoBehaviour
 
     public string GetVersion() => _manifest?.version ?? "0";
 
+    public AssetBundle GetLoadedBundle(string bundleName)
+    {
+        bundleName = Normalize(bundleName);
+        return _loaded.TryGetValue(bundleName, out var r) ? r.Bundle : null;
+    }
+
     #endregion
 
-    #region 加载 Bundle（带引用计数 + 依赖）
+    #region 加载 Bundle（去重 + Token + 孤儿清理 + 级联依赖）
 
     /// <summary>
-    /// 同步加载 Bundle（自动加载依赖并增加引用）
+    /// 异步加载 Bundle。同一 AB 并发请求会共享同一个 UniTask。
     /// </summary>
-    public AssetBundle LoadBundle(string bundleName)
+    public async UniTask<AssetBundle> LoadBundleAsync(string bundleName, CancellationToken token = default)
     {
         bundleName = Normalize(bundleName);
 
+        // 已加载：直接加引用
         if (_loaded.TryGetValue(bundleName, out var abRef))
         {
             abRef.Retain();
+            // 依赖也要加引用（级联）
+            RetainDependencies(bundleName);
             return abRef.Bundle;
         }
 
-        // 先加载依赖
+        // 去重：已有加载任务则直接 await 同一个
+        if (_loadingTasks.TryGetValue(bundleName, out var existing))
+        {
+            var ab = await existing.AttachExternalCancellation(token);
+            // 任务完成后可能已经被别人 Register，再 Retain
+            if (_loaded.TryGetValue(bundleName, out abRef))
+            {
+                abRef.Retain();
+                RetainDependencies(bundleName);
+            }
+            return ab;
+        }
+
+        // 新建加载任务
+        var utcs = new UniTaskCompletionSource<AssetBundle>();
+        _loadingTasks[bundleName] = utcs.Task;
+
+        AssetBundle result = null;
+        try
+        {
+            result = await LoadBundleInternalAsync(bundleName, token);
+            utcs.TrySetResult(result);
+            return result;
+        }
+        catch (OperationCanceledException)
+        {
+            utcs.TrySetCanceled(token);
+            throw;
+        }
+        catch (Exception ex)
+        {
+            utcs.TrySetException(ex);
+            throw;
+        }
+        finally
+        {
+            _loadingTasks.Remove(bundleName);
+        }
+    }
+
+    async UniTask<AssetBundle> LoadBundleInternalAsync(string bundleName, CancellationToken token)
+    {
+        // 1. 先加载依赖（级联）
         var info = _manifest?.Get(bundleName);
         if (info?.depends != null)
         {
             foreach (var dep in info.depends)
             {
-                if (!string.IsNullOrEmpty(dep))
-                    LoadBundle(dep);
+                if (string.IsNullOrEmpty(dep)) continue;
+                await LoadBundleAsync(dep, token); // 依赖也会去重 + 加引用
             }
+        }
+
+        token.ThrowIfCancellationRequested();
+
+        // 2. 已加载则直接返回（可能在 await 依赖期间被别人加载完）
+        if (_loaded.TryGetValue(bundleName, out var abRef))
+        {
+            abRef.Retain();
+            return abRef.Bundle;
         }
 
         string filePath = ResolveBundlePath(bundleName, info);
@@ -131,78 +182,75 @@ public class ABManager : MonoBehaviour
             return null;
         }
 
-        AssetBundle ab = AssetBundle.LoadFromFile(filePath);
-        if (ab == null)
+        AssetBundle ab = null;
+        try
         {
-            Debug.LogError($"[AB] LoadFromFile 失败: {filePath}");
-            return null;
-        }
+            var request = AssetBundle.LoadFromFileAsync(filePath);
+            // UniTask 扩展：WithCancellation 在取消时会抛 OperationCanceledException
+            ab = await request.ToUniTask(cancellationToken: token);
 
-        abRef = new ABRef(bundleName, ab);
-        abRef.Retain();
-        _loaded[bundleName] = abRef;
-        return ab;
+            token.ThrowIfCancellationRequested();
+
+            // 再次检查是否已被别人注册
+            if (_loaded.TryGetValue(bundleName, out abRef))
+            {
+                // 自己加载出来的变成多余，立刻卸掉
+                if (ab != null && ab != abRef.Bundle)
+                    ab.Unload(false);
+                abRef.Retain();
+                return abRef.Bundle;
+            }
+
+            abRef = new ABRef(bundleName, ab);
+            abRef.Retain(); // 初始 1
+            _loaded[bundleName] = abRef;
+            return ab;
+        }
+        catch (OperationCanceledException)
+        {
+            // 核心防漏：Cancel 时如果 AB 已经创建出来但还没注册成功，必须立刻释放
+            if (ab != null)
+            {
+                ab.Unload(true);
+                ab = null;
+            }
+            throw;
+        }
     }
 
-    public IEnumerator LoadBundleAsync(string bundleName, Action<AssetBundle> onComplete)
+    /// <summary>
+    /// 返回可自动释放的 Handle（推荐业务层使用）
+    /// </summary>
+    public async UniTask<ABHandle> LoadBundleHandleAsync(string bundleName, CancellationToken token = default)
     {
-        bundleName = Normalize(bundleName);
+        await LoadBundleAsync(bundleName, token);
+        return new ABHandle(this, Normalize(bundleName));
+    }
 
-        if (_loaded.TryGetValue(bundleName, out var abRef))
-        {
-            abRef.Retain();
-            onComplete?.Invoke(abRef.Bundle);
-            yield break;
-        }
-
+    void RetainDependencies(string bundleName)
+    {
         var info = _manifest?.Get(bundleName);
-        if (info?.depends != null)
+        if (info?.depends == null) return;
+        foreach (var dep in info.depends)
         {
-            foreach (var dep in info.depends)
-            {
-                if (!string.IsNullOrEmpty(dep))
-                    yield return LoadBundleAsync(dep, null);
-            }
+            if (string.IsNullOrEmpty(dep)) continue;
+            string d = Normalize(dep);
+            if (_loaded.TryGetValue(d, out var r))
+                r.Retain();
         }
-
-        string filePath = ResolveBundlePath(bundleName, info);
-        if (string.IsNullOrEmpty(filePath) || !File.Exists(filePath))
-        {
-            Debug.LogError($"[AB] 文件不存在: {bundleName}");
-            onComplete?.Invoke(null);
-            yield break;
-        }
-
-        var req = AssetBundle.LoadFromFileAsync(filePath);
-        yield return req;
-
-        if (req.assetBundle == null)
-        {
-            Debug.LogError($"[AB] 异步加载失败: {filePath}");
-            onComplete?.Invoke(null);
-            yield break;
-        }
-
-        abRef = new ABRef(bundleName, req.assetBundle);
-        abRef.Retain();
-        _loaded[bundleName] = abRef;
-        onComplete?.Invoke(req.assetBundle);
     }
 
     string ResolveBundlePath(string bundleName, ABInfo info)
     {
-        // 优先用 hash 作为实际文件名（热更友好），没有则用逻辑名
         string fileName = (info != null && !string.IsNullOrEmpty(info.hash))
             ? info.hash + ".unity3d"
             : bundleName;
 
-        // 统一走路径优先级
         string hot = Path.Combine(ABPath.PersistentRoot, fileName);
         if (File.Exists(hot))
             return hot;
 
-        string stream = Path.Combine(ABPath.StreamingRoot, fileName);
-        return stream;
+        return Path.Combine(ABPath.StreamingRoot, fileName);
     }
 
     static string Normalize(string name)
@@ -213,61 +261,26 @@ public class ABManager : MonoBehaviour
 
     #endregion
 
-    #region 加载具体资源
+    #region 加载资源
 
-    public T LoadAsset<T>(string bundleName, string assetName) where T : UnityEngine.Object
+    public async UniTask<T> LoadAssetAsync<T>(string bundleName, string assetName, CancellationToken token = default)
+        where T : UnityEngine.Object
     {
 #if UNITY_EDITOR
         if (!ShouldUseAssetBundle())
         {
-            // 编辑器直读，约定路径：Assets/Bundles/xxx
-            string editorPath = $"Assets/Bundles/{bundleName}/{assetName}";
-            // 尝试常见扩展
-            var obj = AssetDatabase.LoadAssetAtPath<T>(editorPath);
+            string path1 = $"Assets/Bundles/{bundleName}/{assetName}";
+            var obj = AssetDatabase.LoadAssetAtPath<T>(path1);
             if (obj == null)
-            {
-                // 再试不带目录的
                 obj = AssetDatabase.LoadAssetAtPath<T>($"Assets/Bundles/{assetName}");
-            }
             return obj;
         }
 #endif
-        var ab = LoadBundle(bundleName);
+        var ab = await LoadBundleAsync(bundleName, token);
         if (ab == null) return null;
-        return ab.LoadAsset<T>(assetName);
-    }
-
-    public IEnumerator LoadAssetAsync<T>(string bundleName, string assetName, Action<T> onComplete) where T : UnityEngine.Object
-    {
-#if UNITY_EDITOR
-        if (!ShouldUseAssetBundle())
-        {
-            var obj = LoadAsset<T>(bundleName, assetName);
-            onComplete?.Invoke(obj);
-            yield break;
-        }
-#endif
-        AssetBundle ab = null;
-        yield return LoadBundleAsync(bundleName, b => ab = b);
-        if (ab == null)
-        {
-            onComplete?.Invoke(null);
-            yield break;
-        }
 
         var req = ab.LoadAssetAsync<T>(assetName);
-        yield return req;
-        onComplete?.Invoke(req.asset as T);
-    }
-
-    /// <summary>
-    /// 加载 Bundle 内所有资源（少用，优先用带名字的 LoadAsset）
-    /// </summary>
-    public UnityEngine.Object[] LoadAllAssets(string bundleName)
-    {
-        var ab = LoadBundle(bundleName);
-        if (ab == null) return Array.Empty<UnityEngine.Object>();
-        return ab.LoadAllAssets();
+        return await req.ToUniTask(cancellationToken: token) as T;
     }
 
     #endregion
@@ -275,8 +288,7 @@ public class ABManager : MonoBehaviour
     #region 卸载
 
     /// <summary>
-    /// 减少引用。归零后真正 Unload。
-    /// unloadAllLoadedObjects=true 会销毁已加载的资产实例（慎用）
+    /// 减少引用。归零后真正 Unload，并级联减少依赖引用。
     /// </summary>
     public void UnloadBundle(string bundleName, bool unloadAllLoadedObjects = false)
     {
@@ -292,7 +304,7 @@ public class ABManager : MonoBehaviour
         abRef.Bundle.Unload(unloadAllLoadedObjects);
         _loaded.Remove(bundleName);
 
-        // 依赖的引用也要减（简单做法：只减直接依赖）
+        // 级联减依赖
         var info = _manifest?.Get(bundleName);
         if (info?.depends != null)
         {
@@ -309,6 +321,7 @@ public class ABManager : MonoBehaviour
         foreach (var kv in _loaded)
             kv.Value.Bundle.Unload(unloadAllLoadedObjects);
         _loaded.Clear();
+        _loadingTasks.Clear();
         Resources.UnloadUnusedAssets();
         Debug.Log("[AB] UnloadAll 完成");
     }
@@ -319,10 +332,7 @@ public class ABManager : MonoBehaviour
         return _loaded.TryGetValue(bundleName, out var r) ? r.RefCount : 0;
     }
 
-    public bool IsLoaded(string bundleName)
-    {
-        return _loaded.ContainsKey(Normalize(bundleName));
-    }
+    public bool IsLoaded(string bundleName) => _loaded.ContainsKey(Normalize(bundleName));
 
     #endregion
 }

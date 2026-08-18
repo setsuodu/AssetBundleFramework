@@ -1,0 +1,12 @@
+<linker>
+  <!-- 防止 IL2CPP High Stripping 裁掉 Manifest 相关类型 -->
+  <assembly fullname="Assembly-CSharp">
+    <type fullname="ABManifest" preserve="all"/>
+    <type fullname="ABInfo" preserve="all"/>
+    <type fullname="ABRef" preserve="all"/>
+    <type fullname="ABHandle" preserve="all"/>
+    <type fullname="ABManager" preserve="all"/>
+    <type fullname="ABUpdater" preserve="all"/>
+    <type fullname="ABPath" preserve="all"/>
+  </assembly>
+</linker>

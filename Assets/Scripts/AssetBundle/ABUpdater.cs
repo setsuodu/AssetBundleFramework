@@ -1,43 +1,38 @@
 using System;
-using System.Collections;
 using System.Collections.Generic;
 using System.IO;
+using System.Threading;
+using Cysharp.Threading.Tasks;
 using UnityEngine;
 using UnityEngine.Networking;
 
 /// <summary>
-/// 热更新模块
-/// 策略：整包 version 快速判断 + 每个 Bundle Hash 差量下载
-/// 下载文件以 hash 命名，写入 persistent
+/// 热更新（UniTask 版）
+/// version 快速判断 + Hash 差量下载，支持 CancellationToken
 /// </summary>
 public class ABUpdater : MonoBehaviour
 {
     [Header("远程根地址，末尾不要斜杠")]
     public string remoteRoot = "https://your-cdn.com/AssetBundles";
 
-    /// <summary>
-    /// 检查并更新
-    /// onProgress: 0~1
-    /// onComplete: 是否有实际更新
-    /// </summary>
-    public IEnumerator CheckAndUpdate(Action<float, string> onProgress, Action<bool> onComplete)
+    public async UniTask<bool> CheckAndUpdateAsync(
+        IProgress<(float progress, string tip)> progress = null,
+        CancellationToken token = default)
     {
         ABPath.EnsurePersistentDir();
-
         string platform = ABPath.GetPlatformName();
         string remoteVersionUrl = $"{remoteRoot}/{platform}/version.txt";
         string remoteManifestUrl = $"{remoteRoot}/{platform}/manifest.json";
 
-        // ---------- 1. 拉远程 version ----------
-        string remoteVersion = null;
+        // 1. 远程 version
+        string remoteVersion;
         using (var req = UnityWebRequest.Get(remoteVersionUrl))
         {
-            yield return req.SendWebRequest();
+            await req.SendWebRequest().WithCancellation(token);
             if (req.result != UnityWebRequest.Result.Success)
             {
-                Debug.LogWarning($"[ABUpdate] 获取 version 失败: {req.error}，跳过更新");
-                onComplete?.Invoke(false);
-                yield break;
+                Debug.LogWarning($"[ABUpdate] version 失败: {req.error}");
+                return false;
             }
             remoteVersion = req.downloadHandler.text.Trim();
         }
@@ -53,116 +48,82 @@ public class ABUpdater : MonoBehaviour
             try
             {
                 localManifest = JsonUtility.FromJson<ABManifest>(File.ReadAllText(localManifestPath));
-                if (localManifest != null)
-                    localVersion = localManifest.version;
+                if (localManifest != null) localVersion = localManifest.version;
             }
             catch { }
         }
 
-        Debug.Log($"[ABUpdate] local={localVersion}  remote={remoteVersion}");
-
+        Debug.Log($"[ABUpdate] local={localVersion} remote={remoteVersion}");
         if (remoteVersion == localVersion)
         {
-            Debug.Log("[ABUpdate] 版本相同，无需更新");
-            onProgress?.Invoke(1f, "已是最新");
-            onComplete?.Invoke(false);
-            yield break;
+            progress?.Report((1f, "已是最新"));
+            return false;
         }
 
-        // ---------- 2. 拉远程 manifest ----------
-        ABManifest remoteManifest = null;
+        // 2. 远程 manifest
+        ABManifest remoteManifest;
         using (var req = UnityWebRequest.Get(remoteManifestUrl))
         {
-            yield return req.SendWebRequest();
+            await req.SendWebRequest().WithCancellation(token);
             if (req.result != UnityWebRequest.Result.Success)
             {
-                Debug.LogError($"[ABUpdate] 获取 manifest 失败: {req.error}");
-                onComplete?.Invoke(false);
-                yield break;
+                Debug.LogError($"[ABUpdate] manifest 失败: {req.error}");
+                return false;
             }
             remoteManifest = JsonUtility.FromJson<ABManifest>(req.downloadHandler.text);
         }
 
-        if (remoteManifest?.bundles == null)
-        {
-            onComplete?.Invoke(false);
-            yield break;
-        }
+        if (remoteManifest?.bundles == null) return false;
 
-        // ---------- 3. 计算需要下载的列表 ----------
-        var needDownload = new List<ABInfo>();
+        // 3. 差量
+        var need = new List<ABInfo>();
         foreach (var info in remoteManifest.bundles)
         {
             string localFile = Path.Combine(ABPath.PersistentRoot, info.hash + ".unity3d");
-            // 也检查 StreamingAssets 里是否已有相同 hash（首包可能已带）
             string streamFile = Path.Combine(ABPath.StreamingRoot, info.hash + ".unity3d");
-
-            bool exists = File.Exists(localFile) || File.Exists(streamFile);
-            if (!exists)
-            {
-                needDownload.Add(info);
-                continue;
-            }
-
-            // 可选：再校验本地文件 hash（更稳，但慢）。简单场景可只判断存在。
-            // 这里为了严谨，对 persistent 再算一次（StreamingAssets 信任首包）
-            if (File.Exists(localFile))
-            {
-                // 生产环境可加 MD5 校验，这里省略以节省启动时间
-            }
+            if (!File.Exists(localFile) && !File.Exists(streamFile))
+                need.Add(info);
         }
 
-        if (needDownload.Count == 0)
+        if (need.Count == 0)
         {
-            // 只更新了 manifest/version
             SaveManifest(remoteManifest);
-            onProgress?.Invoke(1f, "完成");
-            onComplete?.Invoke(true);
-            yield break;
+            progress?.Report((1f, "完成"));
+            return true;
         }
 
-        Debug.Log($"[ABUpdate] 需要下载 {needDownload.Count} 个文件");
+        Debug.Log($"[ABUpdate] 下载 {need.Count} 个");
 
-        // ---------- 4. 下载 ----------
-        int total = needDownload.Count;
-        for (int i = 0; i < total; i++)
+        // 4. 下载
+        for (int i = 0; i < need.Count; i++)
         {
-            var info = needDownload[i];
+            token.ThrowIfCancellationRequested();
+            var info = need[i];
             string url = $"{remoteRoot}/{platform}/{info.hash}.unity3d";
-            string savePath = Path.Combine(ABPath.PersistentRoot, info.hash + ".unity3d");
+            string save = Path.Combine(ABPath.PersistentRoot, info.hash + ".unity3d");
 
-            onProgress?.Invoke((float)i / total, $"下载 {info.name}");
+            progress?.Report(((float)i / need.Count, info.name));
 
             using (var req = UnityWebRequest.Get(url))
             {
-                yield return req.SendWebRequest();
+                await req.SendWebRequest().WithCancellation(token);
                 if (req.result == UnityWebRequest.Result.Success)
-                {
-                    File.WriteAllBytes(savePath, req.downloadHandler.data);
-                }
+                    File.WriteAllBytes(save, req.downloadHandler.data);
                 else
-                {
-                    Debug.LogError($"[ABUpdate] 下载失败: {info.name}  {req.error}");
-                    // 可在此加入重试逻辑
-                }
+                    Debug.LogError($"[ABUpdate] 下载失败 {info.name}: {req.error}");
             }
         }
 
-        // ---------- 5. 保存新 manifest ----------
         SaveManifest(remoteManifest);
-
-        onProgress?.Invoke(1f, "更新完成");
-        Debug.Log("[ABUpdate] 全部完成");
-        onComplete?.Invoke(true);
+        progress?.Report((1f, "更新完成"));
+        return true;
     }
 
     void SaveManifest(ABManifest manifest)
     {
         ABPath.EnsurePersistentDir();
-        string path = Path.Combine(ABPath.PersistentRoot, "manifest.json");
-        File.WriteAllText(path, JsonUtility.ToJson(manifest, true));
-
-        // 同步写 version.txt 方便外部查看
+        File.WriteAllText(Path.Combine(ABPath.PersistentRoot, "manifest.json"),
+            JsonUtility.ToJson(manifest, true));
         File.WriteAllText(Path.Combine(ABPath.PersistentRoot, "version.txt"), manifest.version);
     }
 }
