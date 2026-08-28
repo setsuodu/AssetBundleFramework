@@ -195,7 +195,7 @@ GameObject:
   - component: {fileID: 3200157583773547834}
   - component: {fileID: 4819763782145052736}
   m_Layer: 0
-  m_Name: chibi-girls-1
+  m_Name: ChibiGirls_1
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
