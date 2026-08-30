@@ -32,6 +32,10 @@ public static class ABBuilder
 
     public static void Build(BuildTarget target, bool syncToStreamingAssets)
     {
+        // 【Issue #3】打包前切断 TMP Fallback 双向环，防止跨 Bundle 循环依赖
+        try { TMPFallbackValidator.AutoFixTMPCircularFallbacks(); }
+        catch (System.Exception e) { Debug.LogWarning($"[ABBuilder] TMPFallback 修复跳过: {e.Message}"); }
+
         CleanLabels();
         TryAutoFixShared();
         SetLabels();
@@ -158,6 +162,12 @@ public static class ABBuilder
         if (!norm.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
             return null;
 
+        // 【Issue #3】Fonts 目录下全部资源（ttf / TMP Font Asset / 材质 / 图集纹理）
+        // 强制打进同一 AB，避免 TMP Fallback 双向引用形成跨 Bundle 循环依赖死锁。
+        // 与 ABDependencyChecker.SharedLabelRules 中 fonts/common 规则保持一致。
+        if (norm.StartsWith("Assets/Bundles/Fonts/", StringComparison.OrdinalIgnoreCase))
+            return "fonts/common";
+
         string relative = norm.Substring(prefix.Length);
         string withoutExt = Path.ChangeExtension(relative, null) ?? relative;
         withoutExt = withoutExt.Replace('\\', '/').Trim('/');
@@ -218,7 +228,73 @@ public static class ABBuilder
                 depends = unityManifest.GetAllDependencies(name)
             });
         }
+
+        // 【Issue #3】打包后检测并报告 AB 依赖环（双向/多向循环）
+        ReportCircularDependencies(result);
         return result;
+    }
+
+    /// <summary>
+    /// 检测 manifest 中的循环依赖并打 Warning，便于 CI / 本地一眼发现问题。
+    /// </summary>
+    static void ReportCircularDependencies(ABManifest manifest)
+    {
+        if (manifest?.bundles == null || manifest.bundles.Count == 0) return;
+
+        var graph = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase);
+        foreach (var b in manifest.bundles)
+        {
+            if (b == null || string.IsNullOrEmpty(b.name)) continue;
+            graph[b.name] = b.depends ?? Array.Empty<string>();
+        }
+
+        var cycles = new List<string>();
+        var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var stack = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var path = new List<string>();
+
+        void Dfs(string node)
+        {
+            if (stack.Contains(node))
+            {
+                int idx = path.IndexOf(node);
+                if (idx >= 0)
+                    cycles.Add(string.Join(" → ", path.GetRange(idx, path.Count - idx)) + " → " + node);
+                return;
+            }
+            if (visited.Contains(node)) return;
+            visited.Add(node);
+            stack.Add(node);
+            path.Add(node);
+
+            if (graph.TryGetValue(node, out var deps))
+            {
+                foreach (var d in deps)
+                {
+                    if (string.IsNullOrEmpty(d)) continue;
+                    string dn = d.ToLowerInvariant().Replace('\\', '/');
+                    if (graph.ContainsKey(dn))
+                        Dfs(dn);
+                }
+            }
+
+            path.RemoveAt(path.Count - 1);
+            stack.Remove(node);
+        }
+
+        foreach (var key in graph.Keys)
+            Dfs(key);
+
+        if (cycles.Count > 0)
+        {
+            Debug.LogError($"[ABBuilder] 检测到 {cycles.Count} 处 AB 循环依赖（可能导致运行时加载死锁）:\n  - " +
+                           string.Join("\n  - ", cycles) +
+                           "\n建议：将互相引用的资源（尤其是 TMP Font Fallback）打进同一 Bundle，或断开双向 Fallback。");
+        }
+        else
+        {
+            Debug.Log("[ABBuilder] 依赖环检查通过，无循环依赖。");
+        }
     }
 
     static void RenameToHashAndWriteManifest(string outputDir, ABManifest manifest)

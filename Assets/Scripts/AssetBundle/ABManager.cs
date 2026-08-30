@@ -156,12 +156,20 @@ public class ABManager : MonoBehaviour
     async UniTask<AssetBundle> LoadBundleInternalAsync(string bundleName, CancellationToken token)
     {
         // 1. 先加载依赖（级联）
+        // 【Issue #3】若依赖已在 _loadingTasks 中，说明存在循环依赖（如 TMP Fallback 互挂），
+        // 直接跳过 await，避免递归死锁；该依赖会由正在进行的加载任务完成。
         var info = _manifest?.Get(bundleName);
         if (info?.depends != null)
         {
             foreach (var dep in info.depends)
             {
                 if (string.IsNullOrEmpty(dep)) continue;
+                string depNorm = Normalize(dep);
+                if (_loadingTasks.ContainsKey(depNorm))
+                {
+                    Debug.LogWarning($"[AB] 检测到循环依赖，跳过等待: {bundleName} → {depNorm}");
+                    continue;
+                }
                 await LoadBundleAsync(dep, token); // 依赖也会去重 + 加引用
             }
         }
