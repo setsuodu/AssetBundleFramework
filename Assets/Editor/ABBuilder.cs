@@ -8,42 +8,35 @@ using UnityEditor;
 using UnityEngine;
 
 /// <summary>
-/// 打包流水线：
-/// Clean Labels →（可选 AutoFix Atlas）→ Set Labels → Build → 写 manifest → Clean Labels
-/// 只处理 Assets/Bundles 下资源的目录 Label；共享 Art 依赖需扩展规则或依赖 Checker 报告手工/后续脚本
+/// 打包：Clean → AutoFix → SetLabels(Bundles) → SetSharedLabels(Art依赖) → Build → Clean
+/// 菜单 priority 分层：0 检测 / 50 标签与修复 / 100 构建
 /// </summary>
 public static class ABBuilder
 {
     const string MenuRoot = "Tools/AssetBundle/";
     const string BundlesRoot = "Assets/Bundles";
 
-    [MenuItem(MenuRoot + "Set Labels Only")]
+    // ----- 50 段：Label -----
+    [MenuItem(MenuRoot + "Set Labels (Bundles 目录)", false, 52)]
     public static void MenuSetLabels() => SetLabels();
 
-    [MenuItem(MenuRoot + "Clean Labels Only")]
+    [MenuItem(MenuRoot + "Clean Labels", false, 53)]
     public static void MenuCleanLabels() => CleanLabels();
 
-    [MenuItem(MenuRoot + "Build (当前平台 + 同步 StreamingAssets)")]
+    // ----- 100 段：构建 -----
+    [MenuItem(MenuRoot + "Build (当前平台 + 同步 StreamingAssets)", false, 100)]
     public static void BuildCurrent() => Build(EditorUserBuildSettings.activeBuildTarget, true);
 
-    [MenuItem(MenuRoot + "Build Only (不同步 StreamingAssets)")]
+    [MenuItem(MenuRoot + "Build Only (不同步 StreamingAssets)", false, 101)]
     public static void BuildOnly() => Build(EditorUserBuildSettings.activeBuildTarget, false);
 
-    /// <summary>
-    /// 完整构建入口
-    /// </summary>
     public static void Build(BuildTarget target, bool syncToStreamingAssets)
     {
-        // 1. 先清干净，避免旧 Label 污染
         CleanLabels();
-
-        // 2. 多引用 Sprite 压入 Common Atlas（不搬文件；无此脚本则跳过）
         TryAutoFixShared();
-
-        // 3. 按 Bundles 目录结构打 Label
         SetLabels();
+        TrySetSharedLabelsFromDeps();
 
-        // 4. Build
         string output = ABPath.BuildOutputRoot;
         if (Directory.Exists(output))
             Directory.Delete(output, true);
@@ -61,10 +54,8 @@ public static class ABBuilder
         var abManifest = GenerateManifest(output, unityManifest);
         RenameToHashAndWriteManifest(output, abManifest);
         File.WriteAllText(Path.Combine(output, "version.txt"), abManifest.version);
-
         Debug.Log($"[ABBuilder] 完成 → {output}  ver={abManifest.version}");
 
-        // 5. 再清 Label，工程保持干净
         CleanLabels();
 
         if (syncToStreamingAssets)
@@ -73,16 +64,6 @@ public static class ABBuilder
         AssetDatabase.Refresh();
     }
 
-    // -------------------------------------------------------------------------
-    // Set Labels / Clean Labels
-    // -------------------------------------------------------------------------
-
-    /// <summary>
-    /// 遍历 Assets/Bundles，按「一级目录/相对路径去扩展名」设 assetBundleName
-    /// 例：Assets/Bundles/UI/UI_Home.prefab → ui/ui_home
-    ///     Assets/Bundles/Fonts/Dosis.ttf → fonts/dosis
-    ///     Assets/Bundles/Sprites/Atlas_UI_Common.spriteatlas → sprites/atlas_ui_common
-    /// </summary>
     public static void SetLabels()
     {
         if (!AssetDatabase.IsValidFolder(BundlesRoot))
@@ -92,7 +73,6 @@ public static class ABBuilder
         }
 
         AssetDatabase.RemoveUnusedAssetBundleNames();
-
         int count = 0;
         string[] guids = AssetDatabase.FindAssets("", new[] { BundlesRoot });
         foreach (string guid in guids)
@@ -102,7 +82,6 @@ public static class ABBuilder
                 continue;
             if (path.EndsWith(".meta", StringComparison.OrdinalIgnoreCase))
                 continue;
-            // 跳过脚本等
             string ext = Path.GetExtension(path).ToLowerInvariant();
             if (ext == ".cs" || ext == ".dll" || ext == ".asmdef")
                 continue;
@@ -125,12 +104,9 @@ public static class ABBuilder
 
         AssetDatabase.SaveAssets();
         AssetDatabase.Refresh();
-        Debug.Log($"[ABBuilder] Set Labels 完成，更新约 {count} 个资源");
+        Debug.Log($"[ABBuilder] Set Labels (Bundles) 约 {count} 个");
     }
 
-    /// <summary>
-    /// 清除工程内全部 AssetBundle Name（打包后保持干净）
-    /// </summary>
     public static void CleanLabels()
     {
         string[] names = AssetDatabase.GetAllAssetBundleNames();
@@ -141,9 +117,6 @@ public static class ABBuilder
         Debug.Log("[ABBuilder] Clean Labels 完成");
     }
 
-    /// <summary>
-    /// Assets/Bundles/{Type}/.../file.ext → type/相对路径去扩展名（小写）
-    /// </summary>
     static string PathToBundleName(string assetPath)
     {
         string norm = assetPath.Replace('\\', '/');
@@ -151,16 +124,11 @@ public static class ABBuilder
         if (!norm.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
             return null;
 
-        string relative = norm.Substring(prefix.Length); // UI/UI_Home.prefab
-        if (string.IsNullOrEmpty(relative))
-            return null;
-
-        // 去掉扩展名
+        string relative = norm.Substring(prefix.Length);
         string withoutExt = Path.ChangeExtension(relative, null) ?? relative;
         withoutExt = withoutExt.Replace('\\', '/').Trim('/');
         if (string.IsNullOrEmpty(withoutExt))
             return null;
-
         return withoutExt.ToLowerInvariant();
     }
 
@@ -168,29 +136,8 @@ public static class ABBuilder
     {
         try
         {
-            // 若工程里有 ABDependencyChecker 则调用
-            var type = Type.GetType("ABDependencyChecker");
-            if (type == null)
-            {
-                // 同程序集
-                foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
-                {
-                    type = asm.GetType("ABDependencyChecker");
-                    if (type != null) break;
-                }
-            }
-            if (type == null)
-            {
-                Debug.Log("[ABBuilder] 未找到 ABDependencyChecker，跳过 AutoFix");
-                return;
-            }
-            var mi = type.GetMethod("AutoFixShared",
-                System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
-            if (mi != null)
-            {
-                mi.Invoke(null, new object[] { false });
-                Debug.Log("[ABBuilder] 已调用 AutoFixShared");
-            }
+            ABDependencyChecker.AutoFixShared(false);
+            Debug.Log("[ABBuilder] AutoFixShared 完成");
         }
         catch (Exception e)
         {
@@ -198,9 +145,18 @@ public static class ABBuilder
         }
     }
 
-    // -------------------------------------------------------------------------
-    // Manifest / 输出
-    // -------------------------------------------------------------------------
+    static void TrySetSharedLabelsFromDeps()
+    {
+        try
+        {
+            int n = ABDependencyChecker.SetSharedLabelsFromDependencies();
+            Debug.Log($"[ABBuilder] SetSharedLabels(Art依赖) {n} 个");
+        }
+        catch (Exception e)
+        {
+            Debug.LogWarning($"[ABBuilder] SetSharedLabels 跳过: {e.Message}");
+        }
+    }
 
     static ABManifest GenerateManifest(string outputDir, AssetBundleManifest unityManifest)
     {
@@ -213,6 +169,11 @@ public static class ABBuilder
         foreach (string name in unityManifest.GetAllAssetBundles())
         {
             string filePath = Path.Combine(outputDir, name);
+            if (!File.Exists(filePath))
+            {
+                string leaf = Path.GetFileName(name);
+                filePath = Path.Combine(outputDir, leaf);
+            }
             if (!File.Exists(filePath)) continue;
 
             result.bundles.Add(new ABInfo
@@ -232,18 +193,13 @@ public static class ABBuilder
         {
             string src = Path.Combine(outputDir, info.name);
             if (!File.Exists(src))
-            {
-                // Unity 可能用子路径文件名
-                string leaf = Path.GetFileName(info.name);
-                src = Path.Combine(outputDir, leaf);
-            }
+                src = Path.Combine(outputDir, Path.GetFileName(info.name));
             if (!File.Exists(src)) continue;
 
             string dst = Path.Combine(outputDir, info.hash + ".unity3d");
             if (File.Exists(dst)) File.Delete(dst);
             File.Copy(src, dst);
             File.Delete(src);
-
             string m = src + ".manifest";
             if (File.Exists(m)) File.Delete(m);
         }

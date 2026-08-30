@@ -1,113 +1,113 @@
-# 传统 AssetBundle 框架（UniTask + 防泄漏版）
+# AssetBundleFramework
 
-针对真机「高频进出房间 / 中途强行打断」场景重写，通过引用计数、加载去重、CancellationToken、孤儿 AB 清理，降低资源泄漏风险。
+传统 AssetBundle + UniTask。引用计数、加载去重、CancellationToken，降低进房/退房打断导致的泄漏。
 
-## 依赖
+依赖：Package Manager 安装 UniTask  
+`https://github.com/Cysharp/UniTask.git?path=src/UniTask/Assets/Plugins/UniTask`
 
-- **UniTask**（Cysharp）必须安装  
-  Package Manager → Add package from git URL：  
-  `https://github.com/Cysharp/UniTask.git?path=src/UniTask/Assets/Plugins/UniTask`
+---
 
-## 目录
+## 目录规则
 
 ```
-AssetBundleFramework/
-├── Editor/
-│   ├── ABBuilder.cs
-│   └── ABDependencyChecker.cs   # 依赖冗余检测 + Common Atlas 自动压入
-├── Scripts/AssetBundle/
-│   ├── Data/ABManifest.cs
-│   ├── ABPath.cs
-│   ├── ABRef.cs          # 引用计数 + ABHandle（IDisposable）
-│   ├── ABManager.cs      # UniTask 加载 / 去重 / Token / 级联计数
-│   ├── ABUpdater.cs      # UniTask 热更
-│   └── Example/ABExample.cs
-├── link.xml              # IL2CPP 防裁
-└── README.md
+Assets/
+├── Bundles/                 # 唯一打包扫描根 + Prefab 工作区
+│   ├── UI/                  # UI Prefab
+│   ├── Characters/          # 角色 Prefab
+│   ├── Props/               # 道具 Prefab
+│   ├── Environment/
+│   ├── Fonts/               # 在用字体 + TMP Font Asset（.ttf / .asset）
+│   └── Sprites/             # Atlas 等
+└── Art/                     # 源资源（FBX / 贴图 / 材质 / 项目自有 Shader）
+    ├── Characters/ChibiGirls/{FBX,Materials,Textures}
+    ├── Props/FastFood/{FBX,Materials,Textures,Shaders}
+    └── ...
 ```
 
-## 已修复的关键点
-
-| 问题 | 处理 |
+| 规则 | 说明 |
 |------|------|
-| 并发加载同一 AB 多次 | `_loadingTasks` 去重，共享同一个 UniTask |
-| Cancel 时 AB 已创建未注册 | `catch OperationCanceledException` 里立刻 `Unload` |
-| 无引用计数 / 依赖乱卸 | 级联 Retain / Release，归零才 Unload |
-| 业务层孤儿异步 | 示例强制 `GetCancellationTokenOnDestroy()` |
-| StreamingAssets 脏 / 路径 | 构建输出工程外，运行时 persistent → StreamingAssets |
-| 编辑器与真机分裂 | 编辑器默认 AssetDatabase |
+| 单份资源 | 禁止 Copy 出第二份同 GUID 用途；改哪里以 Prefab 引用为准 |
+| Prefab | 只放 `Bundles` |
+| 模型/贴图/材质/自有 Shader | 可留在 `Art` 原路径，**不搬也能打共享 Label** |
+| 在用字体 | 只放 `Bundles/Fonts`，不要 `Art/Fonts` |
+| 美术 | 只改资源与 Prefab，不设 Label、不建 Atlas、不打包 |
+| 程序 | 只跑菜单/自动化，不手工搬文件 |
 
-## 资源与依赖规则（公用显式 / 独享隐式）
+**Art 组织：** 角色按系列（`Characters/HeroA/...`）；道具按品类/套装（`Props/FastFood/...`），不要顶层一个道具一个文件夹。
 
-### 核心原则
+---
 
-1. **运行时资源工作区：`Assets/Bundles/`**  
-   Prefab、碎图、字体等参与打包的资源放这里。只对 `Bundles` 做依赖分析与 Set Labels。
-2. **磁盘上每张图只有一份（GUID 唯一）**  
-   禁止为「提阶」Copy/剪切出第二张同名图。Prefab 永远引用原路径。
-3. **多引用（≥2 个 Prefab）→ 显式**  
-   - Sprite：自动/半自动压入 **SpriteAtlas**（不改路径）  
-   - Font / 共享 Material / Shader：单独 AB Label（不改路径）
-4. **单引用 → 可隐式**  
-   跟随引用它的 Prefab 进包即可。
-5. **打包流程**  
-   `依赖分析/AutoFix → Set Labels → Build AB → Clean Labels`
+## 打包原则
 
-### 美术 SOP
+- **多引用（≥2 个 Prefab）→ 显式共享 AB 或 Atlas**
+- **单引用 → 可隐式跟随 Prefab**
+- 不物理 Move/Copy；共享靠 Label / SpriteAtlas 引用原路径
 
-- 在 `Assets/Bundles/UI/` 提交完整 `UI_xxx.prefab`。
-- 碎图按职责放：`Bundles/Sprites/Common/...`、`Bundles/Sprites/Panels/Xxx/...` 或模块目录。
-- **不建 Atlas、不设 AB Label**；改图只在原路径覆盖提交。
-- 不要求为每个 Panel 区分「是否会被公用」——交给检测脚本。
+---
 
-### 程序 / Atlas 规则
+## 工具菜单 `Tools/AssetBundle`
 
-| 层级 | 数量 | 内容 | 加载 |
-|------|------|------|------|
-| 全局 Common Atlas | 1 张 | 被 ≥2 个 Prefab 引用的碎图 | 启动或进主 UI 常驻 |
-| 模块 Atlas | 白名单内 0～N | 按系统（Shop/Battle），**不按每个 Panel** | 进模块时加载 |
-| 面板独有大图 | 尽量不建 Atlas | 单图隐式跟随 Prefab | 随界面 |
+| 段 | 菜单 | 作用 |
+|----|------|------|
+| **0** | Check Shared Dependencies | 扫描 `Bundles` 内 Prefab 依赖，报告多引用且无 Label 的资源 |
+| **50** | AutoFix Shared → Common Atlas | 多引用 Sprite 写入 `Atlas_UI_Common`（不搬文件） |
+| **51** | Set Shared Labels (Art 依赖) | 多引用依赖（含 `Art`）按规则打共享 Label |
+| **52** | Set Labels (Bundles 目录) | `Bundles` 下按相对路径设 Label，如 `ui/ui_home` |
+| **53** | Clean Labels | 清除工程内全部 AB Name |
+| **100** | Build（+ 同步 StreamingAssets） | 完整流水线并可选拷首包 |
+| **101** | Build Only | 只构建，不同步 StreamingAssets |
 
-- 全项目 Atlas 建议控制在约 **5～12 张**，避免 30+ Panel = 30 张 Atlas。
-- Background-Tiles 等大图可单独 Atlas 或不合集。
-
-### 模块白名单（代码内配置）
-
-在 `ABDependencyChecker.ModuleAtlasWhitelist` 中配置，例如：
-
-```csharp
-{ "Shop",   "Assets/Bundles/Sprites/Atlas_UI_Shop.spriteatlas" },
-{ "Battle", "Assets/Bundles/Sprites/Atlas_UI_Battle.spriteatlas" },
-```
-
-未在白名单中的多引用碎图 → 进入全局 `Atlas_UI_Common`。
-
-### 菜单
+### 一键 Build 顺序
 
 ```
-Tools/AssetBundle/
-  ├── Check Shared Dependencies (仅报告)
-  ├── AutoFix Shared → Common Atlas (不搬文件)
-  └── Build ...
+Clean Labels
+→ AutoFix（Sprite → Atlas）
+→ Set Labels（Bundles）
+→ Set Shared Labels（Art 等依赖）
+→ BuildAssetBundles + manifest
+→ Clean Labels
+→ （可选）同步 StreamingAssets
 ```
 
-- **仅报告**：列出公用但无 Label 的资源 → `AB_SharedDependency_Report.txt`
-- **AutoFix**：把多引用 Sprite **Add** 进 Common/模块 Atlas（API，不 Move/Copy 文件）
+### Bundles Label 规则
 
-### 建议打包顺序
+`Assets/Bundles/{相对路径/文件名}.ext` → `{相对路径/文件名}` 小写、去扩展名  
 
-1. `AutoFix Shared → Common Atlas`（或 CI 调用 `ABDependencyChecker.AutoFixShared()`）
-2. Set Labels（给 Prefab / Atlas / 共享 Font 等打 Label）
-3. Build AssetBundles
-4. Clean Labels
+例：`Bundles/UI/UI_Home.prefab` → `ui/ui_home`
 
-### 3D / 动画 / Shader（同一原则）
+### 共享 Label 规则（可改脚本 `SharedLabelRules`）
 
-- Humanoid 公用动画、多角色共用贴图 → 显式 common 包  
-- Shader 默认按公用处理（独立 AB 或 Always Included）  
-- 检测脚本同样会报告多引用的 `.anim` / `.mat` / `.shader`
+| 路径包含 | Label |
+|----------|--------|
+| `/Characters/ChibiGirls/` | `characters/chibi_base` |
+| `/Props/Fast Food/` 或 `/Props/FastFood/` | `props/fastfood_common` |
+| `/UI/Animations/Common/` | `ui/anim_common` |
+| `/UI/Sprites/Common/` | `ui/sprites_common` |
+| `/Bundles/Fonts/` | `fonts/common` |
 
-## 业务层正确写法（必须遵守）
+无命中时兜底：`shared/shaders`、`shared/materials`、`shared/{Art下模块}` 等。  
+已在 Atlas 内的 Sprite、黑名单路径不打 Label。
+
+报告输出：工程根目录 `AB_SharedDependency_Report.txt`
+
+---
+
+## 特殊情况（不要当普通业务资源乱打 Label）
+
+| 资源 | 处理 |
+|------|------|
+| **TextMesh Pro 官方 Shader**（如 TMP_SDF） | **Project Settings → Graphics → Always Included Shaders**；黑名单跳过 Label；不要拷进 `Bundles` |
+| **Packages / PackageCache** | 不打 Label |
+| **Assets/Editor** | 不进 AB |
+| **项目自有 Shader**（如 Glass） | 留 Art，多引用走 **Set Shared Labels** |
+| **URP/HDRP/后处理等官方 Shader** | 优先 Always Included 或跟渲染管线默认，不靠某个 Prefab AB 隐式携带 |
+| **全局几乎必用的业务 Shader** | Always Included，或极小的常驻 `shared/shaders` |
+
+字体（自有 ttf + Font Asset）与 TMP **Shader** 分开：字体在 `Bundles/Fonts`；TMP Shader 走 Always Included。
+
+---
+
+## 运行时（业务必须）
 
 ```csharp
 async UniTaskVoid OpenPanelAsync()
@@ -115,31 +115,32 @@ async UniTaskVoid OpenPanelAsync()
     var token = this.GetCancellationTokenOnDestroy();
     try
     {
-        using (var handle = await ABManager.Instance.LoadBundleHandleAsync("ui_panel", token))
+        using (var handle = await ABManager.Instance.LoadBundleHandleAsync("ui/ui_home", token))
         {
-            handle.BindTo(gameObject); // 可选
-            var prefab = await ABManager.Instance.LoadAssetAsync<GameObject>("ui_panel", "Panel", token);
+            var prefab = await ABManager.Instance.LoadAssetAsync<GameObject>("ui/ui_home", "UI_Home", token);
             // ...
         }
     }
-    catch (OperationCanceledException)
-    {
-        // 退房 / 销毁，正常情况
-    }
+    catch (OperationCanceledException) { }
 }
 ```
 
-## 验收标准（建议真机跑）
+加载带依赖的 Prefab 前，确保其共享包已加载（或依赖清单自动加载，视 `ABManager` 实现）。
 
-1. 0.1s 内连续进房/退房 10 次  
-2. Profiler 对比 Snapshot A（主界面）与 Snapshot C（恢复后）  
-3. 通过条件：
-   - `SerializedFile` 数量 Delta ≈ 0  
-   - UniTaskTracker 无残留的 `LoadBundleAsync`  
-   - 无泄漏的 `ABRef` 实例  
+---
 
-## 打包
+## 验收（真机）
 
-菜单：`Tools/AssetBundle/Build (当前平台 + 同步 StreamingAssets)`
+1. 快速反复进房/退房  
+2. Profiler：主界面 → 进房 → 回主界面，SerializedFile / AB 引用无明显只增不减  
+3. 再跑 Check：公用无 Label 应为 0（或仅剩黑名单说明项）
 
-产物在 `Project/Build/AssetBundles/{平台}/`（干净，无 .meta），并可选同步到 StreamingAssets 作为首包。
+---
+
+## 代码位置
+
+```
+Assets/Editor/ABBuilder.cs              # Set/Clean Labels、Build
+Assets/Editor/ABDependencyChecker.cs    # Check、AutoFix、Shared Labels
+Assets/Scripts/AssetBundle/             # 运行时
+```
