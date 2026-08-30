@@ -169,8 +169,8 @@ public static class ABDependencyChecker
 
             if (importer.assetBundleName != bundleName || !string.IsNullOrEmpty(importer.assetBundleVariant))
             {
-                importer.assetBundleVariant = string.Empty;
-                importer.assetBundleName = bundleName;
+                // 正确顺序：先名称，后 variant（使用官方推荐方法）
+                importer.SetAssetBundleNameAndVariant(bundleName, string.Empty);
                 setCount++;
                 log.AppendLine($"[OK] {bundleName} ← {e.AssetPath}");
             }
