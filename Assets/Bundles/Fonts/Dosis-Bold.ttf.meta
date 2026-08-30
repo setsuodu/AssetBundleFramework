@@ -10,8 +10,7 @@ TrueTypeFontImporter:
   includeFontData: 1
   fontNames:
   - Dosis
-  fallbackFontReferences:
-  - {fileID: 12800000, guid: 2ea1a40dae13d4d389bade8f79db2ea8, type: 3}
+  fallbackFontReferences: []
   customCharacters: 
   fontRenderingMode: 0
   ascentCalculationMode: 1
