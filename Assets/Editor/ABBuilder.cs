@@ -108,10 +108,17 @@ public static class ABBuilder
 
     public static void CleanLabels()
     {
-        // 1. 强制清空 Bundles 目录下所有资源的 Label
-        if (AssetDatabase.IsValidFolder(BundlesRoot))
+        // 需要清理的目录（Bundles + Art）
+        string[] rootsToClean = { "Assets/Bundles", "Assets/Art" };
+
+        int cleared = 0;
+
+        foreach (string root in rootsToClean)
         {
-            string[] guids = AssetDatabase.FindAssets("", new[] { BundlesRoot });
+            if (!AssetDatabase.IsValidFolder(root))
+                continue;
+
+            string[] guids = AssetDatabase.FindAssets("", new[] { root });
             foreach (string guid in guids)
             {
                 string path = AssetDatabase.GUIDToAssetPath(guid);
@@ -127,11 +134,12 @@ public static class ABBuilder
                     !string.IsNullOrEmpty(importer.assetBundleVariant))
                 {
                     importer.SetAssetBundleNameAndVariant(string.Empty, string.Empty);
+                    cleared++;
                 }
             }
         }
 
-        // 2. 清理全局名称列表
+        // 再清理全局名称列表
         string[] names = AssetDatabase.GetAllAssetBundleNames();
         for (int i = 0; i < names.Length; i++)
             AssetDatabase.RemoveAssetBundleName(names[i], true);
@@ -140,7 +148,7 @@ public static class ABBuilder
         AssetDatabase.SaveAssets();
         AssetDatabase.Refresh();
 
-        Debug.Log("[ABBuilder] Clean Labels 完成（强制清空）");
+        Debug.Log($"[ABBuilder] Clean Labels 完成，强制清空了 {cleared} 个资源（含 Art）");
     }
 
     static string PathToBundleName(string assetPath)
