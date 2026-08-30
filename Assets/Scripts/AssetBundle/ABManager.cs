@@ -25,7 +25,7 @@ public class ABManager : MonoBehaviour
     private readonly Dictionary<string, UniTask<AssetBundle>> _loadingTasks = new Dictionary<string, UniTask<AssetBundle>>();
     private bool _inited;
 
-    public static bool ForceUseAssetBundleInEditor = false;
+    public static bool ForceUseAssetBundleInEditor = true;
 
     void Awake()
     {
@@ -156,7 +156,8 @@ public class ABManager : MonoBehaviour
     async UniTask<AssetBundle> LoadBundleInternalAsync(string bundleName, CancellationToken token)
     {
         // 1. 先加载依赖（级联）
-        // 【Issue #3】若依赖已在 _loadingTasks 中，说明存在循环依赖（如 TMP Fallback 互挂），
+        // 【Issue #3】若依赖已在 _loadingTasks 中，说明存在循环依赖
+        // （如同家族 ttf 的 fallbackFontReferences 互指且曾被拆到不同 Bundle），
         // 直接跳过 await，避免递归死锁；该依赖会由正在进行的加载任务完成。
         var info = _manifest?.Get(bundleName);
         if (info?.depends != null)

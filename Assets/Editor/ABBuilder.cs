@@ -41,10 +41,6 @@ public static class ABBuilder
 
     public static void Build(BuildTarget target, bool syncToStreamingAssets)
     {
-        // 【Issue #3】打包前切断 TMP Fallback 双向环，防止跨 Bundle 循环依赖
-        try { TMPFallbackValidator.AutoFixTMPCircularFallbacks(); }
-        catch (System.Exception e) { Debug.LogWarning($"[ABBuilder] TMPFallback 修复跳过: {e.Message}"); }
-
         CleanLabels();
         TryAutoFixShared();
         SetLabels();
@@ -171,8 +167,9 @@ public static class ABBuilder
         if (!norm.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
             return null;
 
-        // 【Issue #3】Fonts 目录下全部资源（ttf / TMP Font Asset / 材质 / 图集纹理）
-        // 强制打进同一 AB，避免 TMP Fallback 双向引用形成跨 Bundle 循环依赖死锁。
+        // 【Issue #3】同字体家族多字重 ttf 会被 TrueTypeFontImporter 按 Font Names
+        // 自动互相写入 fallbackFontReferences（只读、Reimport 会再生），若按文件拆包
+        // 会形成跨 Bundle 依赖环。Fonts 目录全部强制打进同一 AB。
         // 与 ABDependencyChecker.SharedLabelRules 中 fonts/common 规则保持一致。
         if (norm.StartsWith("Assets/Bundles/Fonts/", StringComparison.OrdinalIgnoreCase))
             return "fonts/common";
@@ -298,7 +295,7 @@ public static class ABBuilder
         {
             Debug.LogError($"[ABBuilder] 检测到 {cycles.Count} 处 AB 循环依赖（可能导致运行时加载死锁）:\n  - " +
                            string.Join("\n  - ", cycles) +
-                           "\n建议：将互相引用的资源（尤其是 TMP Font Fallback）打进同一 Bundle，或断开双向 Fallback。");
+                           "\n建议：将互相引用的资源打进同一 Bundle（如同家族字体统一 fonts/common）。");
         }
         else
         {
