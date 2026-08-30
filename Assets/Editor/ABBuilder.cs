@@ -75,6 +75,7 @@ public static class ABBuilder
         AssetDatabase.RemoveUnusedAssetBundleNames();
         int count = 0;
         string[] guids = AssetDatabase.FindAssets("", new[] { BundlesRoot });
+
         foreach (string guid in guids)
         {
             string path = AssetDatabase.GUIDToAssetPath(guid);
@@ -82,6 +83,7 @@ public static class ABBuilder
                 continue;
             if (path.EndsWith(".meta", StringComparison.OrdinalIgnoreCase))
                 continue;
+
             string ext = Path.GetExtension(path).ToLowerInvariant();
             if (ext == ".cs" || ext == ".dll" || ext == ".asmdef")
                 continue;
@@ -94,12 +96,9 @@ public static class ABBuilder
             if (importer == null)
                 continue;
 
-            if (importer.assetBundleName != bundleName || !string.IsNullOrEmpty(importer.assetBundleVariant))
-            {
-                importer.assetBundleVariant = string.Empty;
-                importer.assetBundleName = bundleName;
-                count++;
-            }
+            // 强制设置（避免之前的顺序问题和判断问题）
+            importer.SetAssetBundleNameAndVariant(bundleName, string.Empty);
+            count++;
         }
 
         AssetDatabase.SaveAssets();
@@ -109,12 +108,39 @@ public static class ABBuilder
 
     public static void CleanLabels()
     {
+        // 1. 强制清空 Bundles 目录下所有资源的 Label
+        if (AssetDatabase.IsValidFolder(BundlesRoot))
+        {
+            string[] guids = AssetDatabase.FindAssets("", new[] { BundlesRoot });
+            foreach (string guid in guids)
+            {
+                string path = AssetDatabase.GUIDToAssetPath(guid);
+                if (string.IsNullOrEmpty(path) || AssetDatabase.IsValidFolder(path))
+                    continue;
+                if (path.EndsWith(".meta", StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                var importer = AssetImporter.GetAtPath(path);
+                if (importer == null) continue;
+
+                if (!string.IsNullOrEmpty(importer.assetBundleName) ||
+                    !string.IsNullOrEmpty(importer.assetBundleVariant))
+                {
+                    importer.SetAssetBundleNameAndVariant(string.Empty, string.Empty);
+                }
+            }
+        }
+
+        // 2. 清理全局名称列表
         string[] names = AssetDatabase.GetAllAssetBundleNames();
         for (int i = 0; i < names.Length; i++)
             AssetDatabase.RemoveAssetBundleName(names[i], true);
+
         AssetDatabase.RemoveUnusedAssetBundleNames();
+        AssetDatabase.SaveAssets();
         AssetDatabase.Refresh();
-        Debug.Log("[ABBuilder] Clean Labels 完成");
+
+        Debug.Log("[ABBuilder] Clean Labels 完成（强制清空）");
     }
 
     static string PathToBundleName(string assetPath)
