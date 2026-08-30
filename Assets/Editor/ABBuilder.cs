@@ -30,6 +30,15 @@ public static class ABBuilder
     [MenuItem(MenuRoot + "Build Only (不同步 StreamingAssets)", false, 101)]
     public static void BuildOnly() => Build(EditorUserBuildSettings.activeBuildTarget, false);
 
+    [MenuItem(MenuRoot + "Open Persistent (热更下载目录)", false, 200)]
+    public static void MenuOpenPersistent() => ABPath.OpenPersistentFolder();
+
+    [MenuItem(MenuRoot + "Open StreamingAssets (首包目录)", false, 201)]
+    public static void MenuOpenStreaming() => ABPath.OpenStreamingFolder();
+
+    [MenuItem(MenuRoot + "Open Build Output (构建产物)", false, 202)]
+    public static void MenuOpenBuildOutput() => ABPath.OpenBuildOutputFolder();
+
     public static void Build(BuildTarget target, bool syncToStreamingAssets)
     {
         // 【Issue #3】打包前切断 TMP Fallback 双向环，防止跨 Bundle 循环依赖
