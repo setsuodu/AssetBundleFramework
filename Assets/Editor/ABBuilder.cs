@@ -46,7 +46,8 @@ public static class ABBuilder
         SetLabels();
         TrySetSharedLabelsFromDeps();
 
-        string output = ABPath.BuildOutputRoot;
+        //string output = ABPath.BuildOutputRoot;
+        string output = GetBuildOutputForTarget(target);   // 用上面的方法
         if (Directory.Exists(output))
             Directory.Delete(output, true);
         Directory.CreateDirectory(output);
@@ -358,6 +359,90 @@ public static class ABBuilder
             foreach (byte b in hash) sb.Append(b.ToString("x2"));
             return sb.ToString();
         }
+    }
+
+    /// <summary>
+    /// 无头 / CI 入口。用法：
+    /// Unity -batchmode -quit -projectPath . -executeMethod ABBuilder.BuildFromCI -buildTarget StandaloneWindows64 -logFile -
+    /// 可选参数：-syncStreaming true|false（默认 true）
+    /// </summary>
+    public static void BuildFromCI()
+    {
+        int exitCode = 0;
+        try
+        {
+            // 1. 解析平台（优先 Unity 自带 -buildTarget，其次自定义 -abTarget）
+            BuildTarget target = EditorUserBuildSettings.activeBuildTarget;
+            string[] args = Environment.GetCommandLineArgs();
+            for (int i = 0; i < args.Length; i++)
+            {
+                if ((args[i] == "-buildTarget" || args[i] == "-abTarget") && i + 1 < args.Length)
+                {
+                    if (Enum.TryParse(args[i + 1], true, out BuildTarget parsed))
+                        target = parsed;
+                }
+            }
+
+            // 2. 是否同步到 StreamingAssets
+            bool sync = true;
+            for (int i = 0; i < args.Length; i++)
+            {
+                if (args[i] == "-syncStreaming" && i + 1 < args.Length)
+                    sync = args[i + 1].Equals("true", StringComparison.OrdinalIgnoreCase);
+            }
+
+            // 3. 切换活动平台（避免部分导入器按错误平台处理）
+            if (EditorUserBuildSettings.activeBuildTarget != target)
+            {
+                EditorUserBuildSettings.SwitchActiveBuildTarget(
+                    BuildPipeline.GetBuildTargetGroup(target), target);
+            }
+
+            Debug.Log($"[ABBuilder.CI] target={target}  syncStreaming={sync}");
+            Build(target, sync);
+
+            // 4. 简单校验产物
+            string outDir = GetBuildOutputForTarget(target);
+            string manifest = Path.Combine(outDir, "manifest.json");
+            string version = Path.Combine(outDir, "version.txt");
+            if (!File.Exists(manifest) || !File.Exists(version))
+            {
+                Debug.LogError("[ABBuilder.CI] 产物缺失：manifest.json 或 version.txt");
+                exitCode = 1;
+            }
+            else
+            {
+                Debug.Log($"[ABBuilder.CI] 成功 → {outDir}");
+            }
+        }
+        catch (Exception e)
+        {
+            Debug.LogError($"[ABBuilder.CI] 异常: {e}");
+            exitCode = 1;
+        }
+        finally
+        {
+            // batchmode 下必须显式退出，否则进程可能挂起
+            if (Application.isBatchMode)
+                EditorApplication.Exit(exitCode);
+        }
+    }
+
+    /// <summary>按 BuildTarget 返回输出目录（解决 GetPlatformName 编译期问题）</summary>
+    public static string GetBuildOutputForTarget(BuildTarget target)
+    {
+        string platform = target switch
+        {
+            BuildTarget.Android => "Android",
+            BuildTarget.iOS => "iOS",
+            BuildTarget.StandaloneWindows or BuildTarget.StandaloneWindows64 => "StandaloneWindows64",
+            BuildTarget.StandaloneOSX => "StandaloneOSX",
+            BuildTarget.StandaloneLinux64 => "StandaloneLinux64",
+            BuildTarget.WebGL => "WebGL",
+            _ => target.ToString()
+        };
+        string projectRoot = Path.GetDirectoryName(Application.dataPath);
+        return Path.Combine(projectRoot, "Build", "AssetBundles", platform);
     }
 }
 #endif

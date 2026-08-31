@@ -1,0 +1,86 @@
+name: AssetBundle CI
+
+on:
+  push:
+    branches: [main, master, develop]
+    paths:
+      - 'Assets/**'
+      - 'ProjectSettings/**'
+      - 'Packages/**'
+      - '.github/workflows/assetbundle-ci.yml'
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  build-ab:
+    name: Build AB (StandaloneWindows64)
+    runs-on: ubuntu-latest
+    # GameCI 镜像自带对应版本 Unity；版本需与 ProjectVersion.txt 一致
+    container:
+      image: unityci/editor:ubuntu-6000.5.8f1-windows-mono-3
+      # 若该 tag 不存在，到 https://hub.docker.com/r/unityci/editor/tags 查 6000.5.8f1 实际 tag
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Activate Unity (Personal / 仅账号密码)
+        env:
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+        run: |
+          set -e
+          # Named User：-serial 后面不填序列号，只靠账号密码登录激活
+          unity-editor \
+            -batchmode -nographics -quit \
+            -logFile /tmp/activate.log \
+            -username "$UNITY_EMAIL" \
+            -password "$UNITY_PASSWORD" \
+            -serial \
+            || true
+          echo "===== activate log (tail) ====="
+          tail -n 80 /tmp/activate.log || true
+          # 粗略检查是否激活成功（不同版本日志文案可能略有差异）
+          if grep -qiE "License activated|License updated successfully|Successfully activated|No valid Unity Editor license" /tmp/activate.log; then
+            if grep -qi "No valid Unity Editor license" /tmp/activate.log && ! grep -qiE "License activated|Successfully activated" /tmp/activate.log; then
+              echo "::error::许可激活失败，Personal 账号密码方式在此环境不可用"
+              exit 1
+            fi
+          fi
+          echo "Activate step finished"
+
+      - name: Build AssetBundles
+        run: |
+          set -e
+          unity-editor \
+            -batchmode -nographics -quit \
+            -projectPath "$GITHUB_WORKSPACE" \
+            -executeMethod ABBuilder.BuildFromCI \
+            -buildTarget StandaloneWindows64 \
+            -logFile /tmp/build.log
+          echo "===== build log (tail) ====="
+          tail -n 120 /tmp/build.log
+          # 失败时把完整日志丢出来方便查
+          if ! grep -q "\[ABBuilder.CI\].*exitCode=0\|\[ABBuilder.CI\].*成功\|结束 exitCode=0" /tmp/build.log 2>/dev/null; then
+            # 仍以进程退出码为准；上面只是辅助
+            true
+          fi
+
+      - name: Upload AB artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: AssetBundles-StandaloneWindows64-${{ github.sha }}
+          path: Build/AssetBundles/
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unity-logs
+          path: |
+            /tmp/activate.log
+            /tmp/build.log
