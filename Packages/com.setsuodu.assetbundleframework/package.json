@@ -4,14 +4,15 @@
   "displayName": "AssetBundle Framework",
   "description": "Traditional AssetBundle loader with UniTask: ref-count, dedupe load, CancellationToken, hot-update via StreamingAssets ab_config.json.",
   "unity": "2022.3",
-  "documentationUrl": "https://github.com/setsuodu/AssetBundleFramework",
-  "changelogUrl": "https://github.com/setsuodu/AssetBundleFramework/blob/main/CHANGELOG.md",
+  "license": "MIT",
+  "documentationUrl": "https://github.com/setsuodu/AssetBundleFramework/blob/main/Packages/com.setsuodu.assetbundleframework/README.md",
+  "changelogUrl": "https://github.com/setsuodu/AssetBundleFramework/blob/main/Packages/com.setsuodu.assetbundleframework/CHANGELOG.md",
   "licensesUrl": "https://github.com/setsuodu/AssetBundleFramework/blob/main/LICENSE",
   "keywords": [
     "assetbundle",
     "hotupdate",
     "unitask",
-    "addressable-alternative"
+    "bundling"
   ],
   "author": {
     "name": "setsuodu",
@@ -23,7 +24,7 @@
   "samples": [
     {
       "displayName": "Basic Example",
-      "description": "Boot flow: ABConfig.LoadAsync → hot update → load sample assets.",
+      "description": "Boot flow: ABConfig.LoadAsync → hot update → ABManager init. Requires UniTask. UIManager is optional project code, not included.",
       "path": "Samples~/BasicExample"
     }
   ]
