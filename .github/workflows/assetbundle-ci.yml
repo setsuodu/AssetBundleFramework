@@ -1,16 +1,7 @@
 name: AssetBundle CI
 
 on:
-  push:
-    branches: [main, master, develop]
-    paths:
-      - 'Assets/**'
-      - 'ProjectSettings/**'
-      - 'Packages/**'
-      - '.github/workflows/assetbundle-ci.yml'
-  pull_request:
-    branches: [main, master]
-  workflow_dispatch:
+  workflow_dispatch:   # 只在 Actions 页点 “Run workflow”
 
 jobs:
   build-ab:
