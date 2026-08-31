@@ -1,4 +1,6 @@
 ﻿<Solution>
-  <Project Path="Assembly-CSharp.csproj" />
+  <Project Path="com.setsuodu.AssetBundleFramework.csproj" />
   <Project Path="Assembly-CSharp-Editor.csproj" />
+  <Project Path="com.setsuodu.AssetBundleFramework.Editor.csproj" />
+  <Project Path="Assembly-CSharp.csproj" />
 </Solution>

@@ -128,9 +128,9 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 40951675}
+  - component: {fileID: 40951678}
   - component: {fileID: 40951677}
   - component: {fileID: 40951676}
-  - component: {fileID: 40951678}
   m_Layer: 0
   m_Name: ABManager
   m_TagString: Untagged
@@ -162,10 +162,10 @@ MonoBehaviour:
   m_GameObject: {fileID: 40951674}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: bfa160361e2031b449ded01ff3902269, type: 3}
+  m_Script: {fileID: 11500000, guid: 9ef8d6b32539ca14993ea5cfa55ff772, type: 3}
   m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::ABUpdater
-  remoteRoot: http://localhost/AssetBundles
+  m_EditorClassIdentifier: Assembly-CSharp::ABExample
+  updater: {fileID: 40951677}
 --- !u!114 &40951677
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -175,9 +175,11 @@ MonoBehaviour:
   m_GameObject: {fileID: 40951674}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: d029890d684fa1a4b94259c82a245d2a, type: 3}
+  m_Script: {fileID: 11500000, guid: f9680905b9187d645a123383fb7f504c, type: 3}
   m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::ABManager
+  m_EditorClassIdentifier: com.setsuodu.AssetBundleFramework::ABUpdater
+  useInspectorOverride: 0
+  inspectorRemoteRoot: http://127.0.0.1/AssetBundles
 --- !u!114 &40951678
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -187,10 +189,9 @@ MonoBehaviour:
   m_GameObject: {fileID: 40951674}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: fdc6863e34464a94fb8c7837d8a9f158, type: 3}
+  m_Script: {fileID: 11500000, guid: c172b43578a34f44b81f78fbce933e44, type: 3}
   m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::ABExample
-  updater: {fileID: 40951676}
+  m_EditorClassIdentifier: com.setsuodu.AssetBundleFramework::ABManager
 --- !u!1 &316106416
 GameObject:
   m_ObjectHideFlags: 0

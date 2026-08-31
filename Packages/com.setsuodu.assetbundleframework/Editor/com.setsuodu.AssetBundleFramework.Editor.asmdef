@@ -1,0 +1,16 @@
+{
+    "name": "com.setsuodu.AssetBundleFramework.Editor",
+    "rootNamespace": "",
+    "references": [
+        "GUID:65a44fa7859a22642b32318aaf4c2b54"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

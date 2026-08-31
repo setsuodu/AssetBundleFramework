@@ -7,22 +7,50 @@ using UnityEngine;
 using UnityEngine.Networking;
 
 /// <summary>
-/// 热更新（UniTask 版）
-/// version 快速判断 + Hash 差量下载，支持 CancellationToken
+/// 热更新（UniTask 版）— 方案 C：remoteRoot 来自 ABConfig，不再依赖 Inspector 填 URL。
+/// version 快速判断 + Hash 差量下载，支持 CancellationToken。
 /// </summary>
 public class ABUpdater : MonoBehaviour
 {
-    [Header("远程根地址，末尾不要斜杠")]
-    public string remoteRoot = "https://your-cdn.com/AssetBundles";
+    [Header("调试：勾选后忽略 ab_config，强制用下方 Override")]
+    public bool useInspectorOverride;
 
+    [Header("仅 useInspectorOverride 时生效，末尾不要斜杠")]
+    public string inspectorRemoteRoot = "http://127.0.0.1/AssetBundles";
+
+    /// <summary>实际使用的根地址</summary>
+    public string EffectiveRemoteRoot =>
+        useInspectorOverride && !string.IsNullOrWhiteSpace(inspectorRemoteRoot)
+            ? inspectorRemoteRoot.TrimEnd('/')
+            : ABConfig.RemoteRoot;
+
+    /// <summary>
+    /// 建议启动时：await ABConfig.LoadAsync(token) 后再调本方法。
+    /// </summary>
     public async UniTask<bool> CheckAndUpdateAsync(
         IProgress<(float progress, string tip)> progress = null,
         CancellationToken token = default)
     {
+        if (!ABConfig.EnableHotUpdate && !useInspectorOverride)
+        {
+            progress?.Report((1f, "热更已关闭"));
+            Debug.Log("[ABUpdate] enableHotUpdate=false，跳过");
+            return false;
+        }
+
+        string remoteRoot = EffectiveRemoteRoot;
+        if (string.IsNullOrWhiteSpace(remoteRoot))
+        {
+            Debug.LogError("[ABUpdate] remoteRoot 为空，请检查 StreamingAssets/ab_config.json 或 Inspector Override");
+            return false;
+        }
+
         ABPath.EnsurePersistentDir();
         string platform = ABPath.GetPlatformName();
         string remoteVersionUrl = $"{remoteRoot}/{platform}/version.txt";
         string remoteManifestUrl = $"{remoteRoot}/{platform}/manifest.json";
+
+        Debug.Log($"[ABUpdate] remoteRoot={remoteRoot} platform={platform}");
 
         // 1. 远程 version
         string remoteVersion;
@@ -31,7 +59,7 @@ public class ABUpdater : MonoBehaviour
             await req.SendWebRequest().WithCancellation(token);
             if (req.result != UnityWebRequest.Result.Success)
             {
-                Debug.LogWarning($"[ABUpdate] version 失败: {req.error}");
+                Debug.LogWarning($"[ABUpdate] version 失败: {req.error} url={remoteVersionUrl}");
                 return false;
             }
             remoteVersion = req.downloadHandler.text.Trim();
@@ -50,7 +78,7 @@ public class ABUpdater : MonoBehaviour
                 localManifest = JsonUtility.FromJson<ABManifest>(File.ReadAllText(localManifestPath));
                 if (localManifest != null) localVersion = localManifest.version;
             }
-            catch { }
+            catch { /* ignore */ }
         }
 
         Debug.Log($"[ABUpdate] local={localVersion} remote={remoteVersion}");

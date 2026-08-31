@@ -1,0 +1,30 @@
+{
+  "name": "com.setsuodu.assetbundleframework",
+  "version": "1.0.0",
+  "displayName": "AssetBundle Framework",
+  "description": "Traditional AssetBundle loader with UniTask: ref-count, dedupe load, CancellationToken, hot-update via StreamingAssets ab_config.json.",
+  "unity": "2022.3",
+  "documentationUrl": "https://github.com/setsuodu/AssetBundleFramework",
+  "changelogUrl": "https://github.com/setsuodu/AssetBundleFramework/blob/main/CHANGELOG.md",
+  "licensesUrl": "https://github.com/setsuodu/AssetBundleFramework/blob/main/LICENSE",
+  "keywords": [
+    "assetbundle",
+    "hotupdate",
+    "unitask",
+    "addressable-alternative"
+  ],
+  "author": {
+    "name": "setsuodu",
+    "url": "https://github.com/setsuodu"
+  },
+  "dependencies": {
+    "com.cysharp.unitask": "2.5.0"
+  },
+  "samples": [
+    {
+      "displayName": "Basic Example",
+      "description": "Boot flow: ABConfig.LoadAsync → hot update → load sample assets.",
+      "path": "Samples~/BasicExample"
+    }
+  ]
+}

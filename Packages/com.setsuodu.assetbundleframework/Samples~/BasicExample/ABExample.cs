@@ -77,6 +77,10 @@ public class ABExample : MonoBehaviour
         var token = this.GetCancellationTokenOnDestroy();
         try
         {
+            // 方案 C：先加载 StreamingAssets/ab_config.json（及可选远端覆盖）
+            await ABConfig.LoadAsync(token);
+            Debug.Log($"[ABConfig] remoteRoot={ABConfig.RemoteRoot} hotUpdate={ABConfig.EnableHotUpdate}");
+
             if (updater != null)
             {
                 bool updated = await updater.CheckAndUpdateAsync(

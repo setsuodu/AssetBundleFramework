@@ -12,8 +12,17 @@
 /[Uu]serSettings/
 /[Bb]in/
 /[Rr]eplay/
+# 忽略 StreamingAssets 里打出来的 AB，但保留配置
 /Assets/StreamingAssets/
+!/Assets/StreamingAssets/ab_config.json
+!/Assets/StreamingAssets/ab_config.json.meta
+# Packages：只忽略不需要的，不要整目录 /*
+# 本地嵌入包、manifest、lock 要提交
 /Packages/*
+!/Packages/manifest.json
+!/Packages/packages-lock.json
+!/Packages/com.setsuodu.assetbundleframework/
+!/Packages/com.setsuodu.assetbundleframework/**
 ~$*
 
 # Never ignore Asset meta data
