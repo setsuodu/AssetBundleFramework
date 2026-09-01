@@ -1,72 +1,36 @@
-using Cysharp.Threading.Tasks;
-using System;
 using System.Collections.Generic;
 using System.Threading;
+using Cysharp.Threading.Tasks;
 using UnityEngine;
 
 /// <summary>
-/// 极简 UI 管理器
-/// - 从 AB 加载 Prefab
-/// - 自动挂到场景中的 MainCanvas
-/// - 支持关闭 / 清理
+/// 极简 UI 管理：Open / Close / CloseAll。
+/// 资源全部走 ResManager，不再直接碰 ABManager。
 /// </summary>
 public class UIManager : MonoBehaviour
 {
     public static UIManager Instance { get; private set; }
 
-    [Header("可选：手动指定 Canvas，不填则自动找名字为 MainCanvas 的")]
+    [Header("不填则自动找 MainCanvas 或场景第一个 Canvas")]
     public Canvas mainCanvas;
 
-    // 已打开的界面：key = bundleName + "/" + assetName
-    private readonly Dictionary<string, GameObject> _opened = new Dictionary<string, GameObject>();
-    // 对应的 AB 引用，方便关闭时减引用
-    private readonly Dictionary<string, string> _bundleMap = new Dictionary<string, string>();
+    readonly Dictionary<string, GameObject> _opened = new();
+    readonly Dictionary<string, string> _bundleOf = new(); // key → bundle，关闭时减引用
 
     void Awake()
     {
-        if (Instance != null)
-        {
-            Destroy(gameObject);
-            return;
-        }
+        if (Instance != null) { Destroy(gameObject); return; }
         Instance = this;
         DontDestroyOnLoad(gameObject);
-
-        if (mainCanvas == null)
-            mainCanvas = FindMainCanvas();
-    }
-
-    Canvas FindMainCanvas()
-    {
-        // 优先找名字精确匹配的
-        var go = GameObject.Find("MainCanvas");
-        if (go != null)
-        {
-            var c = go.GetComponent<Canvas>();
-            if (c != null) return c;
-        }
-
-        // 退而求其次：场景里第一个 Canvas
-        var any = FindObjectOfType<Canvas>();
-        if (any != null)
-        {
-            Debug.LogWarning("[UIManager] 未找到 MainCanvas，使用场景中第一个 Canvas: " + any.name);
-            return any;
-        }
-
-        Debug.LogError("[UIManager] 场景中没有任何 Canvas！");
-        return null;
+        if (mainCanvas == null) mainCanvas = FindMainCanvas();
     }
 
     /// <summary>
-    /// 打开界面
+    /// 打开界面。name 同时作为 bundle 后缀和资源名，例如 "UI_Home" → bundle=ui/ui_home, asset=UI_Home
     /// </summary>
-    /// <param name="bundleName">AB 逻辑名，例如 "ui/ui_home"</param>
-    /// <param name="assetName">AB 内资源名，例如 "UI_Home"</param>
-    public async UniTask<GameObject> OpenAsync(string bundleName, string assetName, CancellationToken token = default)
+    public async UniTask<GameObject> OpenAsync(string name, CancellationToken ct = default)
     {
-        string key = $"{bundleName}/{assetName}".ToLowerInvariant();
-
+        string key = name.ToLowerInvariant();
         if (_opened.TryGetValue(key, out var exist) && exist != null)
         {
             exist.SetActive(true);
@@ -79,90 +43,67 @@ public class UIManager : MonoBehaviour
             if (mainCanvas == null) return null;
         }
 
-        Debug.Log($"<color=cyan>[UIManager] 开始 LoadAssetAsync: {bundleName} / {assetName}</color>");
-
-        GameObject prefab = null;
-        try
-        {
-            prefab = await ABManager.Instance.LoadAssetAsync<GameObject>(bundleName, assetName, token);
-            Debug.Log($"<color=cyan>[UIManager] LoadAssetAsync 返回了, prefab={(prefab != null ? prefab.name : "null")}</color>");
-        }
-        catch (OperationCanceledException)
-        {
-            Debug.LogWarning("[UIManager] LoadAssetAsync 被取消");
-            return null;
-        }
-        catch (Exception e)
-        {
-            Debug.LogError("[UIManager] LoadAssetAsync 抛异常:");
-            Debug.LogException(e);
-            return null;
-        }
-
+        string bundle = $"ui/{key}";
+        var prefab = await ResManager.LoadAsync<GameObject>(bundle, name, ct);
         if (prefab == null)
         {
-            Debug.LogError($"[UIManager] 加载失败: {bundleName} / {assetName}");
-            var ab = ABManager.Instance.GetLoadedBundle(bundleName);
-            if (ab != null)
-            {
-                foreach (var n in ab.GetAllAssetNames())
-                    Debug.Log("  AB内资源: " + n);
-            }
-            else
-            {
-                Debug.LogError("Bundle 本身都没加载成功");
-            }
+            Debug.LogError($"[UI] 加载失败: {bundle}/{name}");
             return null;
         }
 
         var go = Instantiate(prefab, mainCanvas.transform, false);
-        go.name = assetName;
-
+        go.name = name;
         _opened[key] = go;
-        _bundleMap[key] = bundleName;
-
-        Debug.Log($"<color=green>[UIManager] 打开界面成功: {key}</color>");
+        _bundleOf[key] = bundle;
         return go;
     }
 
-    /// <summary>
-    /// 关闭界面（销毁 + 减 AB 引用）
-    /// </summary>
-    public void Close(string bundleName, string assetName)
-    {
-        string key = $"{bundleName}/{assetName}".ToLowerInvariant();
+    /// <summary>兼容旧调用：bundle + asset</summary>
+    public UniTask<GameObject> OpenAsync(string bundle, string asset, CancellationToken ct = default)
+        => OpenAsync(asset, ct);
 
+    public void Close(string name)
+    {
+        string key = name.ToLowerInvariant();
         if (_opened.TryGetValue(key, out var go) && go != null)
-        {
             Destroy(go);
-        }
         _opened.Remove(key);
 
-        if (_bundleMap.TryGetValue(key, out var bName))
+        if (_bundleOf.TryGetValue(key, out var bundle))
         {
-            ABManager.Instance.UnloadBundle(bName);
-            _bundleMap.Remove(key);
+            ResManager.Unload(bundle);
+            _bundleOf.Remove(key);
         }
-
-        Debug.Log($"[UIManager] 关闭界面: {key}");
     }
 
-    /// <summary>
-    /// 关闭所有已打开界面
-    /// </summary>
+    public void Close(string bundle, string asset) => Close(asset);
+
     public void CloseAll()
     {
-        foreach (var kv in _opened)
-        {
-            if (kv.Value != null)
-                Destroy(kv.Value);
-        }
+        foreach (var go in _opened.Values)
+            if (go != null) Destroy(go);
         _opened.Clear();
 
-        foreach (var bName in _bundleMap.Values)
-            ABManager.Instance.UnloadBundle(bName);
-        _bundleMap.Clear();
+        foreach (var bundle in _bundleOf.Values)
+            ResManager.Unload(bundle);
+        _bundleOf.Clear();
+    }
 
-        Debug.Log("[UIManager] 已关闭所有界面");
+    Canvas FindMainCanvas()
+    {
+        var go = GameObject.Find("MainCanvas");
+        if (go != null)
+        {
+            var c = go.GetComponent<Canvas>();
+            if (c != null) return c;
+        }
+        var any = FindObjectOfType<Canvas>();
+        if (any != null)
+        {
+            Debug.LogWarning($"[UI] 未找到 MainCanvas，使用: {any.name}");
+            return any;
+        }
+        Debug.LogError("[UI] 场景中没有 Canvas");
+        return null;
     }
 }
