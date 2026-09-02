@@ -1,6 +1,6 @@
 {
   "name": "com.setsuodu.assetbundleframework",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "displayName": "AssetBundle Framework",
   "description": "Traditional AssetBundle loader with UniTask: ref-count, dedupe load, CancellationToken, hot-update via StreamingAssets ab_config.json.",
   "unity": "2022.3",
@@ -19,7 +19,7 @@
     "url": "https://github.com/setsuodu"
   },
   "dependencies": {
-    "com.cysharp.unitask": "2.5.0"
+    "com.cysharp.unitask": "2.5.11"
   },
   "samples": [
     {

@@ -7419,10 +7419,10 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: cb8f2dc985974094ab3e94f1943eb12d, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::UI_Login
-  CloseBtn: {fileID: 1508369457072973727}
-  LoginBtn: {fileID: 4936707472302310552}
-  CancelBtn: {fileID: 1488444612210145796}
-  SignUpBtn: {fileID: 3432212220463853434}
+  closeButton: {fileID: 1508369457072973727}
+  loginButton: {fileID: 4936707472302310552}
+  cancelButton: {fileID: 1488444612210145796}
+  signUpButton: {fileID: 3432212220463853434}
 --- !u!1 &6514692492516419000
 GameObject:
   m_ObjectHideFlags: 0

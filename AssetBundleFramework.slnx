@@ -2,5 +2,4 @@
   <Project Path="Assembly-CSharp.csproj" />
   <Project Path="com.setsuodu.AssetBundleFramework.csproj" />
   <Project Path="com.setsuodu.AssetBundleFramework.Editor.csproj" />
-  <Project Path="Assembly-CSharp-Editor.csproj" />
 </Solution>

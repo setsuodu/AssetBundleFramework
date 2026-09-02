@@ -4,7 +4,8 @@ using UnityEngine;
 
 /// <summary>
 /// 所有 UI 面板的基类。
-/// Prefab 实例化后由 UIManager 自动 AddComponent，不需要在编辑器里挂脚本。
+/// 脚本直接挂在 Prefab 上，组件用 [SerializeField] 在 Inspector 里拖引用。
+/// UIManager 实例化后只做 GetComponent + __Init，不再反射 AddComponent。
 /// </summary>
 public abstract class UIBase : MonoBehaviour
 {
@@ -22,10 +23,10 @@ public abstract class UIBase : MonoBehaviour
         OnOpen();
     }
 
-    /// <summary>打开时调用（可重写）</summary>
+    /// <summary>打开时调用（可重写）——在这里绑定按钮、初始化数据</summary>
     protected virtual void OnOpen() { }
 
-    /// <summary>关闭时调用（可重写）</summary>
+    /// <summary>关闭时调用（可重写）——清理监听、临时数据等</summary>
     protected virtual void OnClose() { }
 
     /// <summary>关闭自己</summary>
@@ -34,14 +35,24 @@ public abstract class UIBase : MonoBehaviour
         if (IsClosed) return;
         IsClosed = true;
         OnClose();
-        UIManager.Instance.Close(PanelName);
+        if (UIManager.Instance != null)
+            UIManager.Instance.Close(PanelName);
     }
 
     /// <summary>打开其他面板的便捷方法</summary>
     protected UniTask<GameObject> OpenPanelAsync(string name, CancellationToken ct = default)
         => UIManager.Instance.OpenAsync(name, ct);
 
-    /// <summary>查找子节点上的组件（深度优先）</summary>
+    /// <summary>给已有 Button 绑定点击（推荐配合 [SerializeField] 使用）</summary>
+    protected void BindButton(UnityEngine.UI.Button btn, UnityEngine.Events.UnityAction action)
+    {
+        if (btn != null)
+            btn.onClick.AddListener(action);
+        else
+            Debug.LogWarning($"[{PanelName}] Button is null, cannot bind");
+    }
+
+    /// <summary>查找子节点上的组件（深度优先）。备用，优先用 SerializeField</summary>
     protected T Find<T>(string path = null) where T : Component
     {
         if (string.IsNullOrEmpty(path))
@@ -51,7 +62,7 @@ public abstract class UIBase : MonoBehaviour
         return t != null ? t.GetComponent<T>() : null;
     }
 
-    /// <summary>绑定按钮点击（路径找 Button）</summary>
+    /// <summary>按路径绑定按钮。备用，优先用 SerializeField + BindButton(btn, action)</summary>
     protected void BindButton(string path, UnityEngine.Events.UnityAction action)
     {
         var btn = Find<UnityEngine.UI.Button>(path);

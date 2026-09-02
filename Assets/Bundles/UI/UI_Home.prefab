@@ -3160,6 +3160,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 3ba15fb3bd9120748b2cfeccb28c6de5, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::UI_Home
+  loginButton: {fileID: 5184276038440937263}
 --- !u!1 &5660548143932533153
 GameObject:
   m_ObjectHideFlags: 0
