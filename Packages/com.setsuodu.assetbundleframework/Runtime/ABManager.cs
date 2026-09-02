@@ -25,7 +25,7 @@ public class ABManager : MonoBehaviour
     private readonly Dictionary<string, UniTask<AssetBundle>> _loadingTasks = new Dictionary<string, UniTask<AssetBundle>>();
     private bool _inited;
 
-    public static bool ForceUseAssetBundleInEditor = true;
+    public static bool ForceUseAssetBundleInEditor = false;
 
     void Awake()
     {
@@ -278,11 +278,34 @@ public class ABManager : MonoBehaviour
 #if UNITY_EDITOR
         if (!ShouldUseAssetBundle())
         {
-            string path1 = $"Assets/Bundles/{bundleName}/{assetName}";
-            var obj = AssetDatabase.LoadAssetAtPath<T>(path1);
-            if (obj == null)
-                obj = AssetDatabase.LoadAssetAtPath<T>($"Assets/Bundles/{assetName}");
-            return obj;
+            string[] extensions = { "", ".prefab", ".png", ".jpg", ".asset", ".wav", ".mp3" };
+
+            // 1. 尝试常规路径拼接（带后缀推导）
+            foreach (var ext in extensions)
+            {
+                string path1 = $"Assets/Bundles/{bundleName}/{assetName}{ext}";
+                var obj = AssetDatabase.LoadAssetAtPath<T>(path1);
+                if (obj != null) return obj;
+
+                string path2 = $"Assets/Bundles/{assetName}{ext}";
+                var obj2 = AssetDatabase.LoadAssetAtPath<T>(path2);
+                if (obj2 != null) return obj2;
+            }
+
+            // 2. 兜底搜索：自动忽视大小写与文件夹层级差异
+            string filter = $"{assetName} t:{typeof(T).Name}";
+            string[] guids = AssetDatabase.FindAssets(filter, new[] { "Assets/Bundles" });
+            foreach (var guid in guids)
+            {
+                string path = AssetDatabase.GUIDToAssetPath(guid);
+                if (Path.GetFileNameWithoutExtension(path).Equals(assetName, StringComparison.OrdinalIgnoreCase))
+                {
+                    var obj = AssetDatabase.LoadAssetAtPath<T>(path);
+                    if (obj != null) return obj;
+                }
+            }
+
+            return null;
         }
 #endif
         var ab = await LoadBundleAsync(bundleName, token);
