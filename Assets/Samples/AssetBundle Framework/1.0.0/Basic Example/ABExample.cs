@@ -1,5 +1,4 @@
 using System;
-using System.Threading;
 using Cysharp.Threading.Tasks;
 using UnityEngine;
 
@@ -9,6 +8,11 @@ using UnityEngine;
 public class ABExample : MonoBehaviour
 {
     public ABUpdater updater;
+
+    void Start()
+    {
+        Menu_Boot();
+    }
 
     [ContextMenu("0. Boot（配置→热更→Init→开 Home）")]
     void Menu_Boot() => BootAsync().Forget();
