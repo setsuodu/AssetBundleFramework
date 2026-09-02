@@ -6,10 +6,10 @@ using UnityEngine.UI;
 /// </summary>
 public class UI_Login : UIBase
 {
-    public Button CloseBtn;
-    public Button LoginBtn;
-    public Button CancelBtn;
-    public Button SignUpBtn;
+    [SerializeField] Button CloseBtn;
+    [SerializeField] Button LoginBtn;
+    [SerializeField] Button CancelBtn;
+    [SerializeField] Button SignUpBtn;
 
     // 1. 常量集中管理路径，或直接内联使用
     private const string PATH_CLOSE = "Login-Popup/Popup/Button-Close";
@@ -19,13 +19,13 @@ public class UI_Login : UIBase
 
     void Awake()
     {
-        CloseBtn = transform.Find(PATH_CLOSE)?.GetComponent<Button>();
+        //CloseBtn = transform.Find(PATH_CLOSE)?.GetComponent<Button>();
         Debug.Assert(CloseBtn != null, "[UI_Login] CloseBtn is null");
-        LoginBtn = transform.Find(PATH_LOGIN)?.GetComponent<Button>();
+        //LoginBtn = transform.Find(PATH_LOGIN)?.GetComponent<Button>();
         Debug.Assert(LoginBtn != null, "[UI_Login] LoginBtn is null");
-        CancelBtn = transform.Find(PATH_CANCEL)?.GetComponent<Button>();
+        //CancelBtn = transform.Find(PATH_CANCEL)?.GetComponent<Button>();
         Debug.Assert(CancelBtn != null, "[UI_Login] CancelBtn is null");
-        SignUpBtn = transform.Find(PATH_SIGNUP)?.GetComponent<Button>();
+        //SignUpBtn = transform.Find(PATH_SIGNUP)?.GetComponent<Button>();
         Debug.Assert(SignUpBtn != null, "[UI_Login] SignUpBtn is null");
     }
 
