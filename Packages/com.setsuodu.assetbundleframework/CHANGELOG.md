@@ -18,3 +18,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Requires UniTask (`com.cysharp.unitask`). Install via OpenUPM or Git URL.
 - Place `ab_config.json` under the consuming project's `Assets/StreamingAssets/`.
+
+## [1.0.1] - 2026-08-31
+
+### Fixed
+
+- Fix assetdatabase default loading path from editor to be false.
+
+## [1.0.2] - 2026-08-31
+
+### Added
+
+- Add a Sample with UIManager, UIBase, UI_Login and UI_Home.
+
+## [1.0.3] - 2026-08-31
+
+### Fixed
+
+- Fix Sample Prefab with C# Component.
