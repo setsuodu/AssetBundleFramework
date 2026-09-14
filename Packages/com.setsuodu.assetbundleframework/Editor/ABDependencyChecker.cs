@@ -204,8 +204,11 @@ public static class ABDependencyChecker
             return;
         }
 
-        string[] prefabGuids = AssetDatabase.FindAssets("t:Prefab", new[] { BundlesRoot });
-        prefabCount = prefabGuids.Length;
+        // UIToolkit 适配：入口不再只有 Prefab，UXML（VisualTreeAsset）也要算作入口一起扫。
+        // GetDependencies(path, true) 是递归的，uxml 引用的 uss / uss 里的贴图都会被一并带出，
+        // 不需要再单独扫 t:StyleSheet。
+        string[] prefabGuids = AssetDatabase.FindAssets("t:Prefab t:VisualTreeAsset", new[] { BundlesRoot });
+        prefabCount = prefabGuids.Length; // 字段名沿用，含义变成"入口资源数"（Prefab + UXML）
 
         var refMap = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
         var abRefMap = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
@@ -298,13 +301,17 @@ public static class ABDependencyChecker
             case "Anim": return "shared/anims";
             case "Sprite": return null; // 优先 Atlas，无规则则不单打
             default:
-                // FBX 等：按 Art 下第一级模块
-                if (norm.StartsWith("Assets/Art/", StringComparison.OrdinalIgnoreCase))
+                // FBX / 贴图等：按 Art(s) 下第一级模块（兼容 Assets/Art 与 Assets/Arts 两种目录命名，
+                // 避免因为拼写不一致漏判导致直接落进 shared/misc）
+                foreach (var artRoot in new[] { "Assets/Art/", "Assets/Arts/" })
                 {
-                    string rest = norm.Substring("Assets/Art/".Length);
-                    int slash = rest.IndexOf('/');
-                    string mod = slash > 0 ? rest.Substring(0, slash) : rest;
-                    return ("shared/" + mod).ToLowerInvariant();
+                    if (norm.StartsWith(artRoot, StringComparison.OrdinalIgnoreCase))
+                    {
+                        string rest = norm.Substring(artRoot.Length);
+                        int slash = rest.IndexOf('/');
+                        string mod = slash > 0 ? rest.Substring(0, slash) : rest;
+                        return ("shared/" + mod).ToLowerInvariant();
+                    }
                 }
                 return "shared/misc";
         }
@@ -480,7 +487,11 @@ public static class ABDependencyChecker
         if (path.StartsWith("Assets/Editor/", StringComparison.OrdinalIgnoreCase)) return false;
         switch (Path.GetExtension(path).ToLowerInvariant())
         {
-            case ".cs": case ".dll": case ".asmdef": case ".unity": case ".meta": case ".prefab":
+            // .uxml / .uss 和 .prefab 同等对待：嵌套引用（<ui:Template>/<Style src>）由
+            // ABBuilder.SetLabels() 给每个 Bundles 下的文件各自打 label 处理，
+            // 不需要（也不应该）被当成"待打共享 Label 的 Art 资源"重复处理。
+            case ".cs": case ".dll": case ".asmdef": case ".unity": case ".meta":
+            case ".prefab": case ".uxml": case ".uss":
                 return false;
             case ".png": case ".jpg": case ".jpeg": case ".tga": case ".psd":
             case ".ttf": case ".otf": case ".asset": case ".mat": case ".anim": case ".controller":

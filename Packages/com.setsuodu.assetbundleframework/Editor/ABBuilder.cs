@@ -118,8 +118,9 @@ public static class ABBuilder
 
     public static void CleanLabels()
     {
-        // 需要清理的目录（Bundles + Art）
-        string[] rootsToClean = { "Assets/Bundles", "Assets/Art" };
+        // 需要清理的目录（Bundles + Art/Arts）。同时列出单复数两种拼法，
+        // 不存在的目录会被下面的 IsValidFolder 判断直接跳过，不会报错。
+        string[] rootsToClean = { "Assets/Bundles", "Assets/Art", "Assets/Arts" };
 
         int cleared = 0;
 
